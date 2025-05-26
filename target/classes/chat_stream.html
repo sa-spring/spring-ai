@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepSeek Chat Interface</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 h-screen flex flex-col">
+    <div class="flex-1 overflow-y-auto p-4" id="chatContainer">
+        <!-- Chat messages will be appended here -->
+    </div>
+    <div class="p-4 bg-white border-t">
+        <div class="flex space-x-2">
+            <input 
+                type="text" 
+                id="messageInput" 
+                class="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                placeholder="Type your message..." 
+                onkeypress="if(event.key === 'Enter') sendMessage()"
+            >
+            <button 
+                onclick="sendMessage()" 
+                class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600"
+            >
+                Send
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const chatContainer = document.getElementById('chatContainer');
+        const messageInput = document.getElementById('messageInput');
+
+        function addMessage(content, isUser = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `p-2 my-2 rounded-lg max-w-lg ${
+                isUser ? 'bg-blue-500 text-white ml-auto' : 'bg-gray-200 text-gray-800'
+            }`;
+            messageDiv.textContent = content;
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+
+            // Display user message
+            addMessage(message, true);
+            messageInput.value = '';
+
+            // Prepare to stream response
+            const url = `http://localhost:8080/ai/generateStream?message=${encodeURIComponent(message)}`;
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let botMessageDiv = null;
+                let buffer = '';
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // Process each line (SSE-like data)
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // Keep incomplete line in buffer
+
+                    for (const line of lines) {
+                        if (line.startsWith('data:')) {
+                            const jsonStr = line.slice(5).trim(); // Remove 'data:' prefix
+                            if (jsonStr) {
+                                try {
+                                    const data = JSON.parse(jsonStr);
+                                    const text = data?.result?.output?.text;
+                                    if (text) {
+                                        if (!botMessageDiv) {
+                                            botMessageDiv = document.createElement('div');
+                                            botMessageDiv.className = 'p-2 my-2 rounded-lg max-w-lg bg-gray-200 text-gray-800';
+                                            chatContainer.appendChild(botMessageDiv);
+                                        }
+                                        botMessageDiv.textContent += text;
+                                        chatContainer.scrollTop = chatContainer.scrollHeight;
+                                    }
+                                } catch (e) {
+                                    console.error('JSON parse error:', e);
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                addMessage('Error: Unable to get response from server.');
+            }
+        }
+    </script>
+</body>
+</html>
